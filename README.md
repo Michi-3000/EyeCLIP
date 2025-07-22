@@ -1,111 +1,225 @@
-# EyeCLIP: A Visual-Language Foundation Model for Multi-Modal Ophthalmic Image Analysis
+# EyeCLIP: A Multimodal Visual–Language Foundation Model for Computational Ophthalmology
 
-This repository contains the code for the article **"EyeCLIP: A Visual-Language Foundation Model for Multi-Modal Ophthalmic Image Analysis"**. The paper presents a novel approach for leveraging vision-language pretraining to enhance ophthalmic image analysis across multiple modalities. You can read the full article [here](https://arxiv.org/pdf/2409.06644).
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?logo=PyTorch\&logoColor=white)](https://pytorch.org/)
 
-## Overview
+> Official repository for **EyeCLIP**, a vision-language foundation model designed specifically for **multi-modal ophthalmic image analysis**.
+> 📝 **Paper**: [*A Multimodal Visual–Language Foundation Model for Computational Ophthalmology* (npj Digital Medicine, 2025)](https://www.nature.com/articles/s41746-025-01772-2.pdf)
 
-EyeCLIP builds upon the CLIP (Contrastive Language-Image Pretraining) framework, adapting it specifically for ophthalmic image analysis. It is designed to:
-- Integrate and analyze multiple ophthalmic imaging modalities (e.g., Fundus, OCT, FA, ICGA, etc.).
-- Perform zero-shot and fine-tuned classification for both ophthalmic and systemic diseases.
-- Enable cross-modal retrieval between images and textual descriptions.
+---
 
-The code in this repository is largely based on the publicly available implementation from the original CLIP paper: [Learning Transferable Visual Models From Natural Language Supervision](https://arxiv.org/abs/2103.00020).
+## 🔍 Overview
+**EyeCLIP** adapts the CLIP (Contrastive Language–Image Pretraining) architecture to address the unique challenges of ophthalmology. It incorporates self-supervised learning, multi-modal image contrastive learning, and hierarchical keyword-guided vision-language supervision. These innovations empower EyeCLIP to achieve **zero-shot disease recognition**, **cross-modal retrieval**, and **efficient fine-tuning** across a wide range of ophthalmic and systemic conditions.
 
-```bibtex
-@misc{radford2021learningtransferablevisualmodels,
-      title={Learning Transferable Visual Models From Natural Language Supervision},
-      author={Alec Radford and Jong Wook Kim and Chris Hallacy and Aditya Ramesh and Gabriel Goh and Sandhini Agarwal and Girish Sastry and Amanda Askell and Pamela Mishkin and Jack Clark and Gretchen Krueger and Ilya Sutskever},
-      year={2021},
-      eprint={2103.00020},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2103.00020},
-}
+---
+
+## ✨ Key Features
+
+* 🧠 **Multimodal Support**
+  Natively pretrained on 11 ophthalmic modalities using one encoder, including:
+
+  * Color Fundus Photography (CFP)
+  * Optical Coherence Tomography (OCT)
+  * Fundus Fluorescein Angiography (FFA)
+  * Indocyanine Green Angiography (ICGA)
+  * Fundus Autofluorescence (FAF)
+  * Slit Lamp Photography
+  * Ocular Ultrasound (OUS)
+  * Specular Microscopy
+  * External Eye Photography
+  * Corneal Photography
+  * RetCam Imaging
+
+* 🔗 **CLIP-based Vision–Language Pretraining**
+  Tailored adaptation of OpenAI’s CLIP for ophthalmic imaging and medical-language semantics.
+
+* 🚀 **Zero-Shot Generalization**
+  Classifies both **ophthalmic** and **systemic** diseases using natural language prompts—without task-specific fine-tuning.
+
+* 🧩 **Versatile and Adaptable**
+  Easily fine-tuned for downstream diagnostic tasks, including multi-label classification, systemic disease prediction, and rare disease diagnosis.
+
+---
+
+## 🗞️ News
+
+* **2025-07**: Initial release of pre-trained EyeCLIP model weights
+* **2025-06**: Paper accepted by *npj Digital Medicine*
+* **2025-03**: Public release of EyeCLIP codebase
+
+---
+
+## ⚙️ Installation
+
+Set up the environment using conda and pip:
+
+```bash
+conda install --yes -c pytorch pytorch=1.7.1 torchvision cudatoolkit=11.0
+pip install ftfy regex tqdm
+pip install git+https://github.com/openai/CLIP.git
+git clone https://github.com/Michi-3000/EyeCLIP.git
+cd EyeCLIP
 ```
 
-## Installation
+---
 
-To set up the environment, please follow the installation instructions provided in the official CLIP repository: [https://github.com/openai/CLIP](https://github.com/openai/CLIP).
+## 🎯 Pretrained Weights
 
-### Dependencies
-Ensure that you have the following dependencies installed:
-- Python 3.8+
-- PyTorch (with CUDA support for GPU training)
-- OpenAI CLIP package
+| Model Name           | Description                                                    | Download Link                      |
+| -------------------- | -------------------------------------------------------------- | ---------------------------------- |
+| `EyeCLIP_multimodal` | Multimodal foundation model trained on diverse ophthalmic data | [🔗 Google Drive (placeholder)](https://drive.google.com/file/d/1LS2VqYDJB8zzjkplRaWSx9v2WHguAiUg/view?usp=sharing) |
 
-## Dataset Preparation
+---
 
-To prepare the dataset for pretraining and downstream tasks, follow these steps:
+## 📁 Dataset Preparation
 
-1. **Download the Dataset**
-   - Use the links provided in the article to download the publicly available ophthalmic imaging datasets.
+To prepare datasets for pretraining or downstream evaluation:
 
-2. **Organize the Data**
-   - Ensure the dataset is structured as follows:
-     ```
-     dataset_root/
-     ├── images/
-     │   ├── image1.jpg
-     │   ├── image2.jpg
-     │   ├── ...
-     ├── labels.csv
-     ```
-   - The `labels.csv` file should be formatted with at least the following columns:
-     ```csv
-     impath,class
-     /path/to/image1.jpg,0
-     /path/to/image2.jpg,1
-     ```
-     where:
-     - `impath`: Absolute path to the image file.
-     - `class`: Integer label representing the class of the image.
+1. **Download** datasets referenced in the paper.
+2. **Organize** them into the following format:
 
-## Pretraining
+```
+dataset_root/
+├── images/
+│   ├── image1.jpg
+│   ├── image2.jpg
+│   └── ...
+├── labels.csv
+```
 
-To pretrain the EyeCLIP model on ophthalmic image datasets, run the following command:
+* `labels.csv` should follow the format:
+
+```
+impath,class
+/path/to/image1.jpg,0
+/path/to/image2.jpg,1
+```
+
+---
+
+## 🚀 Quick Start
+
+### 🔍 Zero-Shot Evaluation
+
+```bash
+python zero_shot.py \
+    --model EyeCLIP_base \
+    --data_path ./your_dataset \
+    --text_prompts "normal retina,diabetic retinopathy,glaucoma"
+```
+
+---
+
+### 🩺 Fine-Tuning
+
+#### Ophthalmic Disease Classification
+
+```bash
+bash scripts/opthalmic_loop.sh
+```
+
+Or use the Python version:
+
+```bash
+current_time=$(date +"%Y-%m-%d-%H%M")
+for epoch in "eyeclip"; do
+  checkpoint="checkpoint-${epoch}.pth"
+  for name in 'IDRiD' 'OCTID' 'PAPILA' 'Retina' 'JSIEC' 'MESSIDOR2' 'Aptos2019' 'Glaucoma_Fundus' 'OCTDL' 'Retina Image Bank'; do
+    CUDA_VISIBLE_DEVICES=2 python main_finetune_opthal.py \
+      --now_epoch $epoch \
+      --test_num 5 \
+      --data_name $name \
+      --batch_size 16 \
+      --world_size 1 \
+      --model vit_large_patch16 \
+      --epochs 50 \
+      --blr 5e-3 --layer_decay 0.65 \
+      --weight_decay 0.05 --drop_path 0.2 \
+      --output_dir "output_dir_downstream/all_dataset_$current_time" \
+      --data_path "" \
+      --finetune "$checkpoint" \
+      --input_size 224
+  done
+done
+```
+
+#### Systemic Disease Classification
+
+```bash
+bash scripts/cls_chro.sh
+```
+
+Or with custom parameters:
+
+```bash
+current_time=$(date +"%Y-%m-%d-%H%M")
+for epoch in "eyeclip"; do
+  checkpoint="checkpoint-${epoch}.pth"
+  CUDA_VISIBLE_DEVICES=0 python main_finetune_chro.py \
+    --now_epoch $epoch \
+    --test_num 5 \
+    --data_name chro \
+    --batch_size 16 \
+    --world_size 1 \
+    --model vit_large_patch16 \
+    --epochs 50 \
+    --blr 5e-3 --layer_decay 0.65 \
+    --weight_decay 0.05 --drop_path 0.2 \
+    --nb_classes 2 \
+    --data_path data/public \
+    --output_dir "output_dir_downstream/chronicdisease5/$current_time" \
+    --finetune "$checkpoint" \
+    --input_size 224
+done
+```
+
+---
+
+## 🧪 Pretraining from Scratch
+
+To pretrain EyeCLIP on your own dataset:
 
 ```bash
 python CLIP_ft_all_1enc_all.py
 ```
 
-## Downstream Tasks
+---
 
-EyeCLIP can be used for various ophthalmic image analysis tasks. Below are the available downstream tasks with corresponding scripts to run them.
+## 📚 Scripts and Utilities
 
-### 1. Zero-Shot Testing
-To evaluate the pretrained model without fine-tuning, run:
-```bash
-python zero_shot.py
-```
+| Script                    | Purpose                                              |
+| ------------------------- | ---------------------------------------------------- |
+| `main_finetune_opthal.py` | Fine-tuning on ophthalmic disease datasets           |
+| `main_finetune_chro.py`   | Fine-tuning for systemic (chronic) disease detection |
+| `zero_shot.py`            | Zero-shot classification using language prompts      |
+| `retrieval.py`            | Cross-modal image–text retrieval                     |
 
-### 2. Ophthalmic Disease Classification
-To fine-tune the model for ophthalmic disease classification, run:
-```bash
-bash scripts/cls_opthal.sh
-```
+---
 
-### 3. Systemic Disease Classification
-To fine-tune the model for systemic disease classification, run:
-```bash
-bash scripts/cls_chro.sh
-```
+## 📖 Citation
 
-### 4. Image-Text Retrieval
-To perform cross-modal retrieval, run:
-```bash
-python retrieval.py
-```
+If you use EyeCLIP in your research, please cite:
 
-## Citation
-
-If you use this repository or find our work helpful, please consider citing our paper:
 ```bibtex
-@article{your_paper_citation,
-  title={EyeCLIP: A Visual-Language Foundation Model for Multi-Modal Ophthalmic Image Analysis},
-  author={Your Name and Co-Authors},
-  journal={arXiv},
-  year={2024},
-  url={https://arxiv.org/pdf/2409.06644}
+@article{shi2025multimodal,
+  title={A multimodal visual--language foundation model for computational ophthalmology},
+  author={Shi, Danli and Zhang, Weiyi and Yang, Jiancheng and Huang, Siyu and Chen, Xiaolan and Xu, Pusheng and Jin, Kai and Lin, Shan and Wei, Jin and Yusufu, Mayinuer and others},
+  journal={npj Digital Medicine},
+  volume={8},
+  number={1},
+  pages={381},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
 }
 ```
 
+---
+
+## 🤝 Acknowledgements
+
+This project builds upon prior open-source contributions, especially:
+
+* [CLIP](https://github.com/openai/CLIP) – Contrastive Language–Image Pretraining by OpenAI
+* [MAE](https://github.com/facebookresearch/mae) – Masked Autoencoders by Facebook AI Research
+
+We thank the open-source community and the medical imaging research ecosystem for their invaluable contributions.
