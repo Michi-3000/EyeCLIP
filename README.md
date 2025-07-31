@@ -67,7 +67,7 @@ cd EyeCLIP
 
 | Model Name           | Description                                                    | Download Link                      |
 | -------------------- | -------------------------------------------------------------- | ---------------------------------- |
-| `EyeCLIP_multimodal` | Multimodal foundation model trained on diverse ophthalmic data | [🔗 Google Drive (placeholder)](https://drive.google.com/file/d/1LS2VqYDJB8zzjkplRaWSx9v2WHguAiUg/view?usp=sharing) |
+| `EyeCLIP_multimodal` | Multimodal foundation model trained on diverse ophthalmic data | [🔗 Google Drive](https://drive.google.com/file/d/1LS2VqYDJB8zzjkplRaWSx9v2WHguAiUg/view?usp=sharing) |
 
 ---
 
