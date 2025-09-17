@@ -67,7 +67,7 @@ cd EyeCLIP
 
 | Model Name           | Description                                                    | Download Link                      |
 | -------------------- | -------------------------------------------------------------- | ---------------------------------- |
-| `EyeCLIP_multimodal` | Multimodal foundation model trained on diverse ophthalmic data | [🔗 Google Drive](https://drive.google.com/file/d/1LS2VqYDJB8zzjkplRaWSx9v2WHguAiUg/view?usp=sharing) |
+| `eyeclip_visual` | Multimodal foundation model trained on diverse ophthalmic data | [🔗 Google Drive](https://drive.google.com/file/d/1u_pUJYPppbprVQQ5jaULEKKp-eJqaVw6/view?usp=sharing) |
 
 ---
 
@@ -103,7 +103,6 @@ impath,class
 
 ```bash
 python zero_shot.py \
-    --model EyeCLIP_base \
     --data_path ./your_dataset \
     --text_prompts "normal retina,diabetic retinopathy,glaucoma"
 ```
@@ -115,32 +114,41 @@ python zero_shot.py \
 #### Ophthalmic Disease Classification
 
 ```bash
-bash scripts/opthalmic_loop.sh
+bash scripts/cls_ophthal.sh
 ```
 
 Or use the Python version:
 
 ```bash
 current_time=$(date +"%Y-%m-%d-%H%M")
-for epoch in "eyeclip"; do
-  checkpoint="checkpoint-${epoch}.pth"
-  for name in 'IDRiD' 'OCTID' 'PAPILA' 'Retina' 'JSIEC' 'MESSIDOR2' 'Aptos2019' 'Glaucoma_Fundus' 'OCTDL' 'Retina Image Bank'; do
-    CUDA_VISIBLE_DEVICES=2 python main_finetune_opthal.py \
-      --now_epoch $epoch \
-      --test_num 5 \
-      --data_name $name \
-      --batch_size 16 \
-      --world_size 1 \
-      --model vit_large_patch16 \
-      --epochs 50 \
-      --blr 5e-3 --layer_decay 0.65 \
-      --weight_decay 0.05 --drop_path 0.2 \
-      --output_dir "output_dir_downstream/all_dataset_$current_time" \
-      --data_path "" \
-      --finetune "$checkpoint" \
-      --input_size 224
-  done
+FINETUNE_CHECKPOINT="eyeclip_visual.pt"
+DATA_PATH="/data/public/"
+
+DATASET_NAMES=("IDRiD" "Aptos2019" "Glaucoma_Fundus" "JSIEC" "Retina" "MESSIDOR2" "OCTID" "PAPILA")
+
+for DATASET_NAME in "${DATASET_NAMES[@]}"; do
+    echo "=============================================="
+    echo "Processing dataset: $DATASET_NAME"
+    echo "=============================================="
+    
+    python main_finetune_ophthal.py \
+        --data_path "${DATA_PATH}" \
+        --data_name "${DATASET_NAME}" \
+        --finetune "${FINETUNE_CHECKPOINT}" \
+        --clip_model_type "ViT-B/32" \
+        --batch_size 64 \
+        --epochs 50 \
+        --lr 1e-4 \
+        --weight_decay 0.01 \
+        --output_dir "./classification_results/${current_time}" \
+        --warmup_epochs 5 \
+        --test_num 5
+        
+    echo "Finished processing dataset: $DATASET_NAME"
+    echo ""
 done
+
+echo "All datasets processed successfully!"
 ```
 
 #### Systemic Disease Classification
@@ -153,24 +161,18 @@ Or with custom parameters:
 
 ```bash
 current_time=$(date +"%Y-%m-%d-%H%M")
-for epoch in "eyeclip"; do
-  checkpoint="checkpoint-${epoch}.pth"
-  CUDA_VISIBLE_DEVICES=0 python main_finetune_chro.py \
-    --now_epoch $epoch \
-    --test_num 5 \
-    --data_name chro \
-    --batch_size 16 \
-    --world_size 1 \
-    --model vit_large_patch16 \
+FINETUNE_CHECKPOINT="eyeclip_visual.pt"
+
+CUDA_VISIBLE_DEVICES=0 python main_finetune_chro.py \
+    --finetune "${FINETUNE_CHECKPOINT}" \
+    --clip_model_type "ViT-B/32" \
+    --batch_size 64 \
     --epochs 50 \
-    --blr 5e-3 --layer_decay 0.65 \
-    --weight_decay 0.05 --drop_path 0.2 \
-    --nb_classes 2 \
-    --data_path data/public \
-    --output_dir "output_dir_downstream/chronicdisease5/$current_time" \
-    --finetune "$checkpoint" \
-    --input_size 224
-done
+    --lr 1e-4 \
+    --weight_decay 0.01 \
+    --output_dir "./classification_results/${current_time}" \
+    --warmup_epochs 5 \
+    --test_num 5
 ```
 
 ---
@@ -187,12 +189,12 @@ python CLIP_ft_all_1enc_all.py
 
 ## 📚 Scripts and Utilities
 
-| Script                    | Purpose                                              |
-| ------------------------- | ---------------------------------------------------- |
-| `main_finetune_opthal.py` | Fine-tuning on ophthalmic disease datasets           |
-| `main_finetune_chro.py`   | Fine-tuning for systemic (chronic) disease detection |
-| `zero_shot.py`            | Zero-shot classification using language prompts      |
-| `retrieval.py`            | Cross-modal image–text retrieval                     |
+| Script                     | Purpose                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `main_finetune_ophthal.py` | Fine-tuning on ophthalmic disease datasets           |
+| `main_finetune_chro.py`    | Fine-tuning for systemic (chronic) disease detection |
+| `zero_shot.py`             | Zero-shot classification using language prompts      |
+| `retrieval.py`             | Cross-modal image–text retrieval                     |
 
 ---
 
