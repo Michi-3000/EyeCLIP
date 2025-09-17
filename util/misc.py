@@ -19,7 +19,43 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 from torch import inf
+import numpy as np
 
+def misc_measures(confusion_matrix):
+    
+    acc = []
+    sensitivity = []
+    specificity = []
+    precision = []
+    G = []
+    F1_score_2 = []
+    mcc_ = []
+    
+    for i in range(0, confusion_matrix.shape[0]):
+        cm1=confusion_matrix[i]
+        #print(cm1)
+        acc.append(1.*(cm1[0,0]+cm1[1,1])/np.sum(cm1))
+        sensitivity_ = 1.*cm1[1,1]/(cm1[1,0]+cm1[1,1])
+        sensitivity.append(sensitivity_)
+        specificity_ = 1.*cm1[0,0]/(cm1[0,1]+cm1[0,0])
+        specificity.append(specificity_)
+        precision_ = 1.*cm1[1,1]/(cm1[1,1]+cm1[0,1])
+        precision.append(precision_)
+        G.append(np.sqrt(sensitivity_*specificity_))
+        F1_score_2.append(2*precision_*sensitivity_/(precision_+sensitivity_))
+        mcc = (cm1[0,0]*cm1[1,1]-cm1[0,1]*cm1[1,0])/np.sqrt((cm1[0,0]+cm1[0,1])*(cm1[0,0]+cm1[1,0])*(cm1[1,1]+cm1[1,0])*(cm1[1,1]+cm1[0,1]))
+        mcc_.append(mcc)
+        
+    acc = np.nanmean(np.array(acc))#.mean()
+    sensitivity = np.nanmean(np.array(sensitivity))#.mean()
+    specificity = np.nanmean(np.array(specificity))#.mean()
+    precision = np.nanmean(np.array(precision))#.mean()
+    G = np.nanmean(np.array(G))#.mean()
+    class_F1 = F1_score_2
+    F1_score_2 = np.nanmean(np.array(F1_score_2))#.mean()
+    mcc_ = np.nanmean(np.array(mcc_))#.mean()
+    
+    return acc, sensitivity, specificity, precision, G, F1_score_2, mcc_, class_F1
 
 class SmoothedValue(object):
     """Track a series of values and provide access to smoothed values over a
@@ -292,12 +328,16 @@ def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
     return total_norm
 
 
-def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
+def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, best_name=False):
     output_dir = Path(args.output_dir)
-    epoch_name = str(epoch)
+    if best_name:
+        epoch_name = "best"
+    else:
+        epoch_name = str(epoch)
     if loss_scaler is not None:
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
         for checkpoint_path in checkpoint_paths:
+        
             to_save = {
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -307,6 +347,9 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
             }
 
             save_on_master(to_save, checkpoint_path)
+            
+            torch.save(model_without_ddp, checkpoint_path.with_name(checkpoint_path.stem + '_whole.pt'))
+
     else:
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
@@ -328,6 +371,29 @@ def load_model(args, model_without_ddp, optimizer, loss_scaler):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
             print("With optim & sched!")
 
+def load_model_test(args, epoch, model_without_ddp, optimizer, loss_scaler,best_name=False):
+    output_dir = Path(args.output_dir)
+    if best_name:
+        epoch_name = 'best'
+    else:
+        epoch_name = str(epoch)
+    test_epoch_path = os.path.join(output_dir, ('checkpoint-%s.pth' % epoch_name))
+    #checkpoint = torch.load(test_epoch_path, map_location='cpu')
+    checkpoint = torch.load(test_epoch_path, map_location='cpu', weights_only=False)
+    model_without_ddp.load_state_dict(checkpoint['model'])
+    return model_without_ddp
+
+def load_model_test2(args, epoch, model_without_ddp, optimizer, loss_scaler,best_name=False):
+    #output_dir = Path(args.output_dir)
+    output_dir = args.ref_dir
+    if best_name:
+        epoch_name = 'best'
+    else:
+        epoch_name = str(epoch)
+    test_epoch_path = os.path.join(output_dir, ('checkpoint-%s.pth' % epoch_name))
+    checkpoint = torch.load(test_epoch_path, map_location='cpu')
+    model_without_ddp.load_state_dict(checkpoint['model'])
+    return model_without_ddp
 
 def all_reduce_mean(x):
     world_size = get_world_size()
