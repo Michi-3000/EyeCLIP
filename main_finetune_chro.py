@@ -1,8 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-# Partly revised by YZ @UCL&Moorfields
-# --------------------------------------------------------
-
 import argparse
 import datetime
 import json
@@ -10,14 +5,15 @@ import numpy as np
 import os
 import time
 from pathlib import Path
+import pandas as pd
 
 import torch
 torch.manual_seed(42)
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 
-import timm
-
+#import timm
+import eyeclip
 #assert timm.__version__ == "0.3.2" # version check
 from timm.models.layers import trunc_normal_
 from timm.data.mixup import Mixup
@@ -28,7 +24,6 @@ import util.misc as misc
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-import models_vit
 
 from engine_finetune_multi import train_one_epoch, evaluate
 from torch.utils.data import Dataset
@@ -38,7 +33,7 @@ from torchvision import datasets, transforms
 from timm.data import create_transform
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from sklearn.model_selection import StratifiedShuffleSplit
-import pandas as pd
+
 class CustomImageFolder(Dataset):
     def __init__(self, dt, transform=None):
         self.dt = dt
@@ -103,6 +98,7 @@ def build_transform(is_train, args):
     t.append(transforms.Normalize(mean, std))
     return transforms.Compose(t)
 
+
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning for image classification', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int,
@@ -110,11 +106,12 @@ def get_args_parser():
     parser.add_argument('--epochs', default=50, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
-
+    
     parser.add_argument('--now_epoch', default=0)
+
     # Model parameters
-    parser.add_argument('--model', default='vit_large_patch16', type=str, metavar='MODEL',
-                        help='Name of model to train')
+    parser.add_argument('--model', default='vit_base_patch32', type=str, metavar='MODEL',
+                        help='Name of model to train')#ViT-B/32
     
     parser.add_argument('--data_name', default='', type=str, metavar='NAME',
                         help='Name of dataset')
@@ -134,7 +131,7 @@ def get_args_parser():
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (absolute lr)')
     parser.add_argument('--blr', type=float, default=1e-3, metavar='LR',
-                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
+                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')#1e-3
     parser.add_argument('--layer_decay', type=float, default=0.75,
                         help='layer-wise lr decay from ELECTRA/BEiT')
 
@@ -185,9 +182,13 @@ def get_args_parser():
     parser.set_defaults(global_pool=True)
     parser.add_argument('--cls_token', action='store_false', dest='global_pool',
                         help='Use class token instead of global pool for classification')
-    parser.add_argument('--index_map', default=None, help='A custom dictionary argument')
+    parser.add_argument('--id_map', default=None, help='A custom dictionary argument')
+    parser.add_argument('--test_num', default=5 ,type=int,
+                        help='Number of tests')
+    parser.add_argument('--clip_model_type', default='ViT-L/14', type=str)
+
     # Dataset parameters
-    parser.add_argument('--data_path', default='public', type=str,
+    parser.add_argument('--data_path', default='public_data', type=str,
                         help='dataset path')
     parser.add_argument('--nb_classes', default=1000, type=int,
                         help='number of the classification types')
@@ -221,20 +222,12 @@ def get_args_parser():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
-    
+
     parser.add_argument('--save_mem', default=True,
                         help='to save memory')
-    parser.add_argument('--test_num', default=5 ,type=int,
-                        help='Number of tests')
 
     return parser
 
-def splitdf(df,by='eid_ckd',test_size=.1, random_state = 0):
-    from sklearn.model_selection import GroupShuffleSplit
-    train_inds, test_inds = next(GroupShuffleSplit(test_size=test_size, n_splits=2, random_state = random_state).split(df, groups=df[by]))
-    train = df.iloc[train_inds].reset_index(drop=True)
-    test = df.iloc[test_inds].reset_index(drop=True)
-    return train,test
 
 def main(args):
     misc.init_distributed_mode(args)
@@ -250,19 +243,28 @@ def main(args):
     np.random.seed(seed)
 
     cudnn.benchmark = True
-    dt = pd.read_csv("public_data/"+args.data_name+'.csv')
-    import math
-    # print(dt[args.data_name].to_list())
-    #dt['class'] = dt[args.data_name]
-    # print(dt['class'].to_list())
-    #dt['impath'] = ['/home/danli/ukb/crop/'+i.split('/')[-1] for i in dt['impath'].to_list()]
 
-    train_dt,test = splitdf(dt,test_size=0.45, random_state=args.seed)
-    val_dt,test_dt = splitdf(test,test_size=0.667, random_state=args.seed)
+    dt = pd.read_csv(os.path.join(args.data_path, args.data_name+'.csv'))
 
+    print(dt.columns.to_list())
+    if 'split' in dt.columns.to_list():
+        split = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=args.seed)
+        train_dt = dt[dt['split']=='train']
+        test_dt = dt[dt['split']=='test']
+        for train_index, test_index in split.split(train_dt, train_dt['class']):
+            val_dt = train_dt.iloc[test_index]
+            train_dt = train_dt.iloc[train_index]
+    else:
+        split1 = StratifiedShuffleSplit(n_splits=1, test_size=0.45, random_state=args.seed)
+        split2 = StratifiedShuffleSplit(n_splits=1, test_size=0.667, random_state=args.seed)
+        for train_index, test_index in split1.split(dt, dt['class']):
+            train_dt = dt.iloc[train_index]
+            test_dt = dt.iloc[test_index]
+        for train_index, test_index in split2.split(test_dt, test_dt['class']):
+            val_dt = test_dt.iloc[test_index]
+            test_dt = test_dt.iloc[train_index]
     train_dt.to_csv(os.path.join(args.output_dir, "train.csv"))
     val_dt.to_csv(os.path.join(args.output_dir, "val.csv"))
-    # print(val_dt['class'].to_list())
     test_dt.to_csv(os.path.join(args.output_dir, "test.csv"))
 
     dataset_train = build_dataset(is_train='train', dt=train_dt, args=args)
@@ -326,6 +328,8 @@ def main(args):
         pin_memory=args.pin_mem,
         drop_last=False
     )
+    
+    
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
@@ -335,42 +339,47 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
     
-    model = models_vit.__dict__[args.model](
-        img_size=args.input_size,
-        num_classes=args.nb_classes,
-        drop_path_rate=args.drop_path,
-        global_pool=args.global_pool,
-    )
+    model, _ = eyeclip.load(args.clip_model_type, device=device, jit=False)
+    model.float()
+    if hasattr(model, 'visual'):
+        model.visual.float()
+    if hasattr(model, 'transformer'):
+        model.transformer.float()
+        model_without_ddp = model.visual
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'norm'}
 
+    model_without_ddp.no_weight_decay = no_weight_decay.__get__(model_without_ddp)
+    num_ftrs = model_without_ddp.output_dim
+    model_without_ddp.head = torch.nn.Linear(num_ftrs, args.nb_classes).to(device)
     if args.finetune and not args.eval:
-        checkpoint = torch.load(args.finetune, map_location='cpu')
+        checkpoint = torch.load(args.finetune, map_location='cpu',weights_only=False)
 
         print("Load pre-trained checkpoint from: %s" % args.finetune)
-        checkpoint_model = checkpoint['model']
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
+        checkpoint_model = checkpoint['model_state_dict']
+        #state_dict = model_without_ddp.state_dict()
+        for k in ['head.weight', 'head.bias', 'proj']:
+            if k in checkpoint_model:
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
-
         # interpolate position embedding
-        interpolate_pos_embed(model, checkpoint_model)
+        #interpolate_pos_embed(model, checkpoint_model)
 
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
-
+        '''
         if args.global_pool:
             assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
         else:
             assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
-
+        '''
         # manually initialize fc layer
-        trunc_normal_(model.head.weight, std=2e-5)
+        trunc_normal_(model_without_ddp.head.weight, std=2e-5)
 
     model.to(device)
 
-    model_without_ddp = model
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print("Model = %s" % str(model_without_ddp))
@@ -420,6 +429,8 @@ def main(args):
     max_accuracy = 0.0
     max_auc = 0.0
     best_epoch = 0
+    initial_weights = {name: param.clone() for name, param in model.named_parameters()}
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -430,9 +441,13 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
+        for name, param in model.named_parameters():
+            if not torch.equal(initial_weights[name], param):
+                print(f"Parameter '{name}' has changed after epoch {epoch}.")
+                #break
 
-        val_stats,val_auc_roc,_ = evaluate(data_loader_val, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune)
-        _ = evaluate(data_loader_test, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune)
+        val_stats,val_auc_roc,_ = evaluate(data_loader_val, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune,seed=args.seed)
+        _ = evaluate(data_loader_test, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune,seed=args.seed)
         if max_auc<val_auc_roc:
             max_auc = val_auc_roc
             best_epoch = epoch
@@ -443,8 +458,8 @@ def main(args):
                     loss_scaler=loss_scaler, epoch=epoch, best_name=args.save_mem)
                 
         if epoch==(args.epochs-1):
-            model = misc.load_model_test(args=args, epoch=best_epoch, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler,best_name=args.save_mem)
-            test_stats,auc_roc, _ = evaluate(data_loader_test, model, device, os.path.join(os.path.dirname(args.output_dir), "test"), mode='test',num_class=args.nb_classes, epoch=args.now_epoch, id_map=None, best_epoch=best_epoch, finetune=args.finetune, seed=args.seed)
+            model = misc.load_model_test(args=args, epoch=best_epoch, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, best_name=args.save_mem)
+            test_stats,auc_roc,_ = evaluate(data_loader_test, model, device, os.path.join(os.path.dirname(os.path.dirname(args.output_dir)), "test"), mode='test',num_class=args.nb_classes, epoch=args.now_epoch, id_map=args.id_map, best_epoch=best_epoch, finetune=args.finetune,seed=args.seed)
 
         
         if log_writer is not None:
@@ -467,7 +482,6 @@ def main(args):
     from datetime import timedelta
     total_time_str = str(timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-
 
 if __name__ == '__main__':
     args = get_args_parser()
