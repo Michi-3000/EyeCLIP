@@ -1,8 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-# Partly revised by YZ @UCL&Moorfields
-# --------------------------------------------------------
-
 import argparse
 import datetime
 import json
@@ -17,8 +12,8 @@ torch.manual_seed(42)
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 
-import timm
-
+#import timm
+import eyeclip
 #assert timm.__version__ == "0.3.2" # version check
 from timm.models.layers import trunc_normal_
 from timm.data.mixup import Mixup
@@ -29,7 +24,6 @@ import util.misc as misc
 from util.pos_embed import interpolate_pos_embed
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
-import models_vit
 
 from engine_finetune_multi import train_one_epoch, evaluate
 from torch.utils.data import Dataset
@@ -116,8 +110,8 @@ def get_args_parser():
     parser.add_argument('--now_epoch', default=0)
 
     # Model parameters
-    parser.add_argument('--model', default='vit_large_patch16', type=str, metavar='MODEL',
-                        help='Name of model to train')
+    parser.add_argument('--model', default='vit_base_patch32', type=str, metavar='MODEL',
+                        help='Name of model to train')#ViT-B/32
     
     parser.add_argument('--data_name', default='', type=str, metavar='NAME',
                         help='Name of dataset')
@@ -137,7 +131,7 @@ def get_args_parser():
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (absolute lr)')
     parser.add_argument('--blr', type=float, default=1e-3, metavar='LR',
-                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
+                        help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')#1e-3
     parser.add_argument('--layer_decay', type=float, default=0.75,
                         help='layer-wise lr decay from ELECTRA/BEiT')
 
@@ -191,6 +185,7 @@ def get_args_parser():
     parser.add_argument('--id_map', default=None, help='A custom dictionary argument')
     parser.add_argument('--test_num', default=5 ,type=int,
                         help='Number of tests')
+    parser.add_argument('--clip_model_type', default='ViT-L/14', type=str)
 
     # Dataset parameters
     parser.add_argument('--data_path', default='public_data', type=str,
@@ -249,7 +244,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dt = pd.read_csv("./public_data/"+args.data_name+'.csv')
+    dt = pd.read_csv(os.path.join(args.data_path, args.data_name+'.csv'))
 
     print(dt.columns.to_list())
     if 'split' in dt.columns.to_list():
@@ -344,42 +339,47 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
     
-    model = models_vit.__dict__[args.model](
-        img_size=args.input_size,
-        num_classes=args.nb_classes,
-        drop_path_rate=args.drop_path,
-        global_pool=args.global_pool,
-    )
+    model, _ = eyeclip.load(args.clip_model_type, device=device, jit=False)
+    model.float()
+    if hasattr(model, 'visual'):
+        model.visual.float()
+    if hasattr(model, 'transformer'):
+        model.transformer.float()
+        model_without_ddp = model.visual
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token', 'norm'}
 
+    model_without_ddp.no_weight_decay = no_weight_decay.__get__(model_without_ddp)
+    num_ftrs = model_without_ddp.output_dim
+    model_without_ddp.head = torch.nn.Linear(num_ftrs, args.nb_classes).to(device)
     if args.finetune and not args.eval:
-        checkpoint = torch.load(args.finetune, map_location='cpu')
+        checkpoint = torch.load(args.finetune, map_location='cpu',weights_only=False)
 
         print("Load pre-trained checkpoint from: %s" % args.finetune)
-        checkpoint_model = checkpoint['model']
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
+        checkpoint_model = checkpoint['model_state_dict']
+        #state_dict = model_without_ddp.state_dict()
+        for k in ['head.weight', 'head.bias', 'proj']:
+            if k in checkpoint_model:
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
-
         # interpolate position embedding
-        interpolate_pos_embed(model, checkpoint_model)
+        #interpolate_pos_embed(model, checkpoint_model)
 
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
-
+        '''
         if args.global_pool:
             assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
         else:
             assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
-
+        '''
         # manually initialize fc layer
-        trunc_normal_(model.head.weight, std=2e-5)
+        trunc_normal_(model_without_ddp.head.weight, std=2e-5)
 
     model.to(device)
 
-    model_without_ddp = model
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print("Model = %s" % str(model_without_ddp))
@@ -429,6 +429,8 @@ def main(args):
     max_accuracy = 0.0
     max_auc = 0.0
     best_epoch = 0
+    initial_weights = {name: param.clone() for name, param in model.named_parameters()}
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -439,6 +441,10 @@ def main(args):
             log_writer=log_writer,
             args=args
         )
+        for name, param in model.named_parameters():
+            if not torch.equal(initial_weights[name], param):
+                print(f"Parameter '{name}' has changed after epoch {epoch}.")
+                #break
 
         val_stats,val_auc_roc,_ = evaluate(data_loader_val, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune,seed=args.seed)
         _ = evaluate(data_loader_test, model, device, os.path.join(args.output_dir, "val"), mode='val',num_class=args.nb_classes, epoch=epoch, finetune=args.finetune,seed=args.seed)
