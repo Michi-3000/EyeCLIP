@@ -22,43 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import pandas as pd
-
-
-def misc_measures(confusion_matrix):
-    
-    acc = []
-    sensitivity = []
-    specificity = []
-    precision = []
-    G = []
-    F1_score_2 = []
-    mcc_ = []
-    
-    for i in range(0, confusion_matrix.shape[0]):
-        cm1=confusion_matrix[i]
-        #print(cm1)
-        acc.append(1.*(cm1[0,0]+cm1[1,1])/np.sum(cm1))
-        sensitivity_ = 1.*cm1[1,1]/(cm1[1,0]+cm1[1,1])
-        sensitivity.append(sensitivity_)
-        specificity_ = 1.*cm1[0,0]/(cm1[0,1]+cm1[0,0])
-        specificity.append(specificity_)
-        precision_ = 1.*cm1[1,1]/(cm1[1,1]+cm1[0,1])
-        precision.append(precision_)
-        G.append(np.sqrt(sensitivity_*specificity_))
-        F1_score_2.append(2*precision_*sensitivity_/(precision_+sensitivity_))
-        mcc = (cm1[0,0]*cm1[1,1]-cm1[0,1]*cm1[1,0])/np.sqrt((cm1[0,0]+cm1[0,1])*(cm1[0,0]+cm1[1,0])*(cm1[1,1]+cm1[1,0])*(cm1[1,1]+cm1[0,1]))
-        mcc_.append(mcc)
-        
-    acc = np.nanmean(np.array(acc))#.mean()
-    sensitivity = np.nanmean(np.array(sensitivity))#.mean()
-    specificity = np.nanmean(np.array(specificity))#.mean()
-    precision = np.nanmean(np.array(precision))#.mean()
-    G = np.nanmean(np.array(G))#.mean()
-    class_F1 = F1_score_2
-    F1_score_2 = np.nanmean(np.array(F1_score_2))#.mean()
-    mcc_ = np.nanmean(np.array(mcc_))#.mean()
-    
-    return acc, sensitivity, specificity, precision, G, F1_score_2, mcc_, class_F1
+from util.misc import misc_measures
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -91,9 +55,18 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             samples, targets = mixup_fn(samples, targets)
 
         with torch.cuda.amp.autocast():
-            outputs = model(samples)
+            visual_features = model.visual(samples)
+            #print(visual_features.shape)
+            outputs = model.visual.head(visual_features)
+            #print(outputs.shape)
+            #print('outputs: ',outputs)
+            #print('targets: ',targets)
+            #outputs = model(samples)
             loss = criterion(outputs, targets)
-
+            if mixup_fn is not None:
+                loss = loss.sum()
+        
+        #loss_scaler.scale(loss).backward()
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
@@ -101,10 +74,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
 
         loss /= accum_iter
+        #loss_scaler.scale(loss).backward()
+        #loss_scaler.step(optimizer)
+        #loss_scaler.update()
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=False,
                     update_grad=(data_iter_step + 1) % accum_iter == 0)
+        
         if (data_iter_step + 1) % accum_iter == 0:
+            #loss_scaler.step(optimizer)
+            #loss_scaler.update()
             optimizer.zero_grad()
 
         torch.cuda.synchronize()
@@ -160,7 +139,15 @@ def evaluate(data_loader, model, device, task, mode, num_class, epoch, id_map=No
 
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(images)
+            #output = model(images)
+            if hasattr(model, "visual"):
+                visual_features = model.visual(images)
+                output = model.visual.head(visual_features)
+            else:
+                visual_features = model(images)
+                output = model.head(visual_features)
+            #visual_features = model.visual(images)
+            #output = model.visual.head(visual_features)
             loss = criterion(output, target)
             prediction_softmax = nn.Softmax(dim=1)(output)
             _,prediction_decode = torch.max(prediction_softmax, 1)
